@@ -1,9 +1,5 @@
 import sys
 import platform
-import os
-from src.rag import *
-from src.llm import *
-from src.vectordb import *
 
 def main():
     print("Welcome to port_tariff! Start building your RAG pipeline here.")

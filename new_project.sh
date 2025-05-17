@@ -103,14 +103,10 @@ Copyright (c) $(date +%Y) $(whoami)
 Permission is hereby granted, free of charge...
 EOF
 
-# Create a starter main.py
+# Create a starter main.py that passes linting
 cat << EOF > main.py
 import sys
 import platform
-import os
-from src.rag import *
-from src.llm import *
-from src.vectordb import *
 
 def main():
     print("Welcome to $PROJECT_NAME! Start building your RAG pipeline here.")
