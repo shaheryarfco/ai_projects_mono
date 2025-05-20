@@ -9,7 +9,7 @@ set -e
 
 PROJECT_NAME=$1
 PYTHON_VERSION=${2:-"3.10"}  # Default to Python 3.10 if not specified
-BASE_DEPENDENCIES="pandas numpy scikit-learn matplotlib langchain chromadb openai mlflow azure-storage-blob psycopg2-binary"
+BASE_DEPENDENCIES="pandas numpy scikit-learn matplotlib langchain chromadb openai mlflow azure-storage-blob psycopg2-binary azure-identity azure-keyvault-secrets"
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # Check if uv is installed

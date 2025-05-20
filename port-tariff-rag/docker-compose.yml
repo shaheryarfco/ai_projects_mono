@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}
+    ports:
+      - "8000:8000"
+  
+  # Uncomment to run MLflow locally for development
+  # mlflow:
+  #   image: ghcr.io/mlflow/mlflow:latest
+  #   ports:
+  #     - "5000:5000"
+  #   volumes:
+  #     - ./mlruns:/mlruns
+  #   command: mlflow server --host 0.0.0.0 --backend-store-uri sqlite:///mlruns/mlflow.db --default-artifact-root ./mlruns

@@ -1,0 +1,12 @@
+pandas
+numpy
+scikit-learn
+matplotlib
+langchain
+chromadb
+openai
+mlflow
+azure-storage-blob
+psycopg2-binary
+azure-identity
+azure-keyvault-secrets

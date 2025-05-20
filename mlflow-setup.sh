@@ -129,15 +129,20 @@ export MLFLOW_ARTIFACT_URI="$MLFLOW_ARTIFACT_URI"
 export AZURE_STORAGE_ACCOUNT="$AZURE_STORAGE_ACCOUNT"
 export AZURE_STORAGE_KEY="$AZURE_STORAGE_KEY"
 
-echo "MLflow environment variables set:"
-echo "MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI"
-echo "MLFLOW_ARTIFACT_URI=$MLFLOW_ARTIFACT_URI"
+# PostgreSQL configuration
+export POSTGRES_SERVER="$POSTGRES_SERVER"
+export POSTGRES_USER="$POSTGRES_USER"
+export POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+export POSTGRES_DB="$POSTGRES_DB"
+
+echo "MLflow environment variables set successfully!"
+echo "MLflow tracking URI: $MLFLOW_TRACKING_URI"
 EOF
     chmod +x "$PROJECT_DIR/scripts/set_mlflow_env.sh"
     
-    # Create a Python utility module for MLflow
-    mkdir -p "$PROJECT_DIR/src/mlops"
-    cat << EOF > "$PROJECT_DIR/src/mlops/mlflow_utils.py"
+    # Create MLflow utility module
+    mkdir -p src/mlops
+    cat << EOF > src/mlops/mlflow_utils.py
 import os
 import mlflow
 from mlflow.tracking import MlflowClient
@@ -178,48 +183,76 @@ def setup_mlflow(experiment_name=None):
     
     return experiment_id
 
-def log_model_with_signature(model, artifact_path, signature=None, input_example=None):
+def log_model_with_signature(model, model_name, X_sample, params=None, metrics=None):
     """
-    Log a model with signature and input example.
+    Log a model to MLflow with input signature.
     
     Args:
-        model: Model to log
-        artifact_path: Path within the run to store the model
-        signature: Model signature (input/output schema)
-        input_example: Example input data
+        model: The model to log
+        model_name: Name to register the model under
+        X_sample: Sample input data for signature
+        params: Optional dictionary of parameters to log
+        metrics: Optional dictionary of metrics to log
     
     Returns:
-        model_info: Information about the logged model
+        run_id: The ID of the MLflow run
     """
-    return mlflow.sklearn.log_model(
-        model,
-        artifact_path,
+    # Log parameters if provided
+    if params:
+        for param_name, param_value in params.items():
+            mlflow.log_param(param_name, param_value)
+    
+    # Log metrics if provided
+    if metrics:
+        for metric_name, metric_value in metrics.items():
+            mlflow.log_metric(metric_name, metric_value)
+    
+    # Create model signature
+    from mlflow.models.signature import infer_signature
+    signature = infer_signature(X_sample, model.predict(X_sample))
+    
+    # Log the model with signature
+    mlflow.sklearn.log_model(
+        sk_model=model,
+        artifact_path=model_name,
         signature=signature,
-        input_example=input_example
+        registered_model_name=model_name
     )
+    
+    return mlflow.active_run().info.run_id
 
-def get_latest_model_version(model_name):
+def register_model(model_uri, model_name, stage="None"):
     """
-    Get the latest version of a registered model.
+    Register a model in the MLflow Model Registry.
     
     Args:
-        model_name: Name of the registered model
+        model_uri: URI of the model to register
+        model_name: Name to register the model under
+        stage: Stage to assign to the model version
     
     Returns:
-        model_version: Latest version of the model
+        model_version: The registered model version
     """
     client = MlflowClient()
-    latest_version = 1
     
+    # Register the model
     try:
-        model_versions = client.search_model_versions(f"name='{model_name}'")
-        if model_versions:
-            latest_version = max([int(mv.version) for mv in model_versions])
-    except mlflow.exceptions.MlflowException:
-        # Model doesn't exist yet
-        pass
-    
-    return latest_version
+        model_details = mlflow.register_model(model_uri, model_name)
+        print(f"Registered model '{model_name}' as version {model_details.version}")
+        
+        # Set the stage if specified
+        if stage != "None":
+            client.transition_model_version_stage(
+                name=model_name,
+                version=model_details.version,
+                stage=stage
+            )
+            print(f"Model '{model_name}' version {model_details.version} transitioned to {stage}")
+        
+        return model_details
+    except Exception as e:
+        print(f"Error registering model: {e}")
+        return None
 EOF
 
     # Create a sample notebook for MLflow usage
@@ -424,3 +457,5 @@ fi
 echo "MLflow setup complete!"
 echo "You can now use MLflow for experiment tracking and model registry."
 echo "See the example notebook at: $PROJECT_DIR/notebooks/mlflow_example.ipynb"
+
+
