@@ -11,6 +11,28 @@ LOCATION=${2:-"centralindia"}  # Default to East US if not specified
 
 echo "Setting up Terraform for project: $PROJECT_NAME ($ENVIRONMENT environment)"
 
+# Add cleanup option at the beginning of the script
+echo "Would you like to clean up any existing resources from failed deployments before proceeding? (y/n): "
+read CLEANUP_RESOURCES
+
+if [[ "$CLEANUP_RESOURCES" == "y" || "$CLEANUP_RESOURCES" == "Y" ]]; then
+    echo "Cleaning up resources from previous deployments..."
+    
+    # Check if the resource group exists
+    if az group show --name "${PROJECT_NAME}-${ENVIRONMENT}-rg" &> /dev/null; then
+        echo "Deleting resource group ${PROJECT_NAME}-${ENVIRONMENT}-rg..."
+        az group delete --name "${PROJECT_NAME}-${ENVIRONMENT}-rg" --yes --no-wait
+        
+        # Wait for resource group deletion to complete
+        echo "Waiting for resource group deletion to complete..."
+        az group wait --name "${PROJECT_NAME}-${ENVIRONMENT}-rg" --deleted
+    else
+        echo "No existing resource group found."
+    fi
+    
+    echo "Cleanup completed."
+fi
+
 # Check if Azure CLI is installed
 if ! command -v az &> /dev/null; then
     echo "Azure CLI not found. Please install it first."
@@ -63,12 +85,12 @@ EOF
 # Create variables.tf with environment-specific defaults
 if [ "$ENVIRONMENT" == "prod" ]; then
   SKU_TIER="Standard"
-  INSTANCE_SIZE="Standard_D2s_v3"
-  POSTGRES_SKU="GP_Standard_D2s_v3"
+  INSTANCE_SIZE="Standard_B1s"  # Changed from D2s_v3 to B1s (smaller)
+  POSTGRES_SKU="GP_Standard_B1s"  # Changed to smaller SKU
 else
   SKU_TIER="Basic"
-  INSTANCE_SIZE="Standard_B1ms"
-  POSTGRES_SKU="B_Standard_B1ms"
+  INSTANCE_SIZE="Standard_B1s"  # Even smaller instance
+  POSTGRES_SKU="B_Standard_B1s"
 fi
 
 cat << EOF > "$ENV_DIR/variables.tf"
@@ -115,7 +137,15 @@ variable "postgres_sku" {
 }
 EOF
 
-# Create main.tf with auto-scaling and cost optimization features
+# Ask which resources to deploy
+echo "Which resources would you like to deploy? (Enter comma-separated list)"
+echo "Options: all, storage, postgres, keyvault, container_registry, none"
+read -p "Resources to deploy (default: all): " RESOURCES_TO_DEPLOY
+
+# Default to all if empty
+RESOURCES_TO_DEPLOY=${RESOURCES_TO_DEPLOY:-"all"}
+
+# Create main.tf with selected resources
 cat << EOF > "$ENV_DIR/main.tf"
 terraform {
   required_providers {
@@ -149,7 +179,11 @@ resource "azurerm_resource_group" "rg" {
     Project     = var.project_name
   }
 }
+EOF
 
+# Add resources based on selection
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"keyvault"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
 # Key Vault
 resource "azurerm_key_vault" "kv" {
   name                = "\${replace(var.project_name, "-", "")}kv\${var.environment}"
@@ -177,28 +211,21 @@ resource "azurerm_key_vault" "kv" {
     Project     = var.project_name
   }
 }
+EOF
+fi
 
-# Storage Account - Pay-as-you-go pricing
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"storage"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Storage Account
 resource "azurerm_storage_account" "storage" {
   name                     = "\${replace(var.project_name, "-", "")}storage\${var.environment}"
   resource_group_name      = azurerm_resource_group.rg.name
   location                 = azurerm_resource_group.rg.location
   account_tier             = "Standard"
-  account_replication_type = var.environment == "prod" ? "GRS" : "LRS"
+  account_replication_type = var.environment == "prod" ? "LRS" : "LRS"  # Changed from GRS to LRS for cost savings
   
   # Enable hierarchical namespace for cost optimization
   is_hns_enabled = true
-  
-  # Enable lifecycle management for automatic tiering
-  blob_properties {
-    delete_retention_policy {
-      days = 7
-    }
-    
-    container_delete_retention_policy {
-      days = 7
-    }
-  }
   
   tags = {
     Environment = var.environment
@@ -206,26 +233,29 @@ resource "azurerm_storage_account" "storage" {
   }
 }
 
-# Storage Container for MLflow Artifacts
-resource "azurerm_storage_container" "mlflow_artifacts" {
-  name                  = "mlflow-artifacts"
-  storage_account_name  = azurerm_storage_account.storage.name
-  container_access_type = "private"
-}
-
-# Storage Container for Data
+# Storage containers
 resource "azurerm_storage_container" "data" {
   name                  = "data"
   storage_account_name  = azurerm_storage_account.storage.name
   container_access_type = "private"
 }
 
-# Azure Container Registry with consumption-based pricing
+resource "azurerm_storage_container" "mlflow_artifacts" {
+  name                  = "mlflow-artifacts"
+  storage_account_name  = azurerm_storage_account.storage.name
+  container_access_type = "private"
+}
+EOF
+fi
+
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"container_registry"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Container Registry
 resource "azurerm_container_registry" "acr" {
   name                = "\${replace(var.project_name, "-", "")}acr\${var.environment}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
-  sku                 = "Basic"  # Basic tier has lower costs when not in use
+  sku                 = "Basic"
   admin_enabled       = true
   
   tags = {
@@ -233,7 +263,11 @@ resource "azurerm_container_registry" "acr" {
     Project     = var.project_name
   }
 }
+EOF
+fi
 
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"postgres"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
 # PostgreSQL Flexible Server
 resource "azurerm_postgresql_flexible_server" "postgres" {
   name                   = "\${var.project_name}-\${var.environment}-psql"
@@ -243,7 +277,7 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   administrator_login    = var.admin_username
   administrator_password = var.admin_password
   storage_mb             = 32768
-  sku_name               = var.environment == "prod" ? "GP_Standard_D4s_v3" : "B_Standard_B1ms"
+  sku_name               = "B_Standard_B1s"  # Using B-series which requires fewer vCPUs
   
   tags = {
     Environment = var.environment
@@ -251,57 +285,15 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   }
 }
 
-# PostgreSQL Database for MLflow
+# Database for MLflow
 resource "azurerm_postgresql_flexible_server_database" "mlflow_db" {
-  name                = "mlflow"
-  server_id           = azurerm_postgresql_flexible_server.postgres.id
-  charset             = "UTF8"
-  collation           = "en_US.utf8"
+  name      = "mlflow"
+  server_id = azurerm_postgresql_flexible_server.postgres.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
 }
-
-# Container Instance for MLflow Tracking Server - Consumption-based pricing
-resource "azurerm_container_group" "mlflow" {
-  name                = "\${var.project_name}-\${var.environment}-mlflow"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  ip_address_type     = "Public"
-  dns_name_label      = "\${var.project_name}-\${var.environment}-mlflow"
-  os_type             = "Linux"
-  
-  # Use restart policy to stop when not in use
-  restart_policy      = "OnFailure"
-  
-  container {
-    name   = "mlflow"
-    image  = "ghcr.io/mlflow/mlflow:latest"
-    cpu    = "0.5"  # Reduced CPU allocation
-    memory = "1.0"  # Reduced memory allocation
-    
-    ports {
-      port     = 5000
-      protocol = "TCP"
-    }
-    
-    environment_variables = {
-      "MLFLOW_SERVER_DEFAULT_ARTIFACT_ROOT" = "wasbs://\${azurerm_storage_container.mlflow_artifacts.name}@\${azurerm_storage_account.storage.name}.blob.core.windows.net/"
-      "AZURE_STORAGE_ACCESS_KEY"            = azurerm_storage_account.storage.primary_access_key
-      "MLFLOW_BACKEND_STORE_URI"            = "postgresql://\${var.admin_username}:\${var.admin_password}@\${azurerm_postgresql_flexible_server.postgres.fqdn}:5432/\${azurerm_postgresql_flexible_server_database.mlflow_db.name}"
-    }
-    
-    commands = [
-      "mlflow",
-      "server",
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "5000",
-      "--backend-store-uri",
-      "postgresql://\${var.admin_username}:\${var.admin_password}@\${azurerm_postgresql_flexible_server.postgres.fqdn}:5432/\${azurerm_postgresql_flexible_server_database.mlflow_db.name}",
-      "--default-artifact-root",
-      "wasbs://\${azurerm_storage_container.mlflow_artifacts.name}@\${azurerm_storage_account.storage.name}.blob.core.windows.net/"
-    ]
-  }
-}
+EOF
+fi
 
 # Azure Function App for serverless compute (optional)
 resource "azurerm_service_plan" "app_service_plan" {
@@ -541,6 +533,11 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
+
+
+
+
 
 
 
