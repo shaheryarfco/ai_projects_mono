@@ -64,11 +64,11 @@ EOF
 if [ "$ENVIRONMENT" == "prod" ]; then
   SKU_TIER="Standard"
   INSTANCE_SIZE="Standard_D2s_v3"
-  POSTGRES_SKU="GP_Gen5_2"
+  POSTGRES_SKU="GP_Standard_D2s_v3"
 else
   SKU_TIER="Basic"
   INSTANCE_SIZE="Standard_B1ms"
-  POSTGRES_SKU="B_Gen5_1"
+  POSTGRES_SKU="B_Standard_B1ms"
 fi
 
 cat << EOF > "$ENV_DIR/variables.tf"
@@ -555,6 +555,7 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
 
 
 

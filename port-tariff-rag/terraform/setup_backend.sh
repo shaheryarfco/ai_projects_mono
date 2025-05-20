@@ -10,9 +10,12 @@ az storage account create   --name "porttariffragtfstatedev"   --resource-group 
 # Create blob container for Terraform state
 az storage container create   --name tfstate   --account-name "porttariffragtfstatedev"
 
-# Get storage account key
+# Get storage account key - use proper quoting and remove special characters
 ACCOUNT_KEY=/XhQwsZlHKRK9KnNUSKMvUcUih17Irnwaw4omyg3KdhDglfoqJdtyU1ivSSfwL5L1amQ+nVEh3iZ+ASt5Rtmpw==
 
-echo "Storage account key: $ACCOUNT_KEY"
+# Clean the key to ensure it's properly formatted
+ACCOUNT_KEY=
+
+echo "Storage account key: "
 echo "Set the following environment variables to initialize Terraform:"
-echo "export ARM_ACCESS_KEY=$ACCOUNT_KEY"
+echo "export ARM_ACCESS_KEY="
