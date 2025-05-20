@@ -73,18 +73,18 @@ setup_python_environment() {
 
   # Install base dependencies using uv add with --active flag
   uv add --active $BASE_DEPENDENCIES
-  
+
   return 0
 }
 
 # Create project structure
 create_project_structure() {
   # Create best-practice folder structure
-  mkdir -p data notebooks src/rag src/llm src/vectordb src/utils src/mlops tests scripts configs terraform
+  mkdir -p data notebooks src/rag src/llm src/vectordb src/utils src/mlops tests scripts configs
 
   # Create __init__.py files for Python packages
   touch src/__init__.py src/rag/__init__.py src/llm/__init__.py src/vectordb/__init__.py src/utils/__init__.py src/mlops/__init__.py
-  
+
   return 0
 }
 
@@ -109,7 +109,6 @@ This project implements a Retrieval-Augmented Generation (RAG) pipeline using LL
 - \`tests/\`: Unit and integration tests
 - \`scripts/\`: Automation and CLI scripts
 - \`configs/\`: Configuration files
-- \`terraform/\`: Infrastructure as Code for Azure deployment
 
 ## Getting Started
 
@@ -128,7 +127,7 @@ python main.py
 ## MLOps Setup
 
 This project includes MLflow for experiment tracking and model registry.
-See the terraform and scripts directories for infrastructure setup.
+See the scripts directory for setup instructions.
 
 ## Python Version
 This project uses Python $ACTUAL_PYTHON_VERSION
@@ -167,25 +166,25 @@ import os
 
 def main():
     print("Welcome to $PROJECT_NAME! Start building your RAG pipeline here.")
-    
+
     # Print Python environment information
     print("\\nPython Environment Information:")
     print(f"Python Version: {platform.python_version()}")
     print(f"Python Implementation: {platform.python_implementation()}")
     print(f"Python Path: {sys.executable}")
-    
+
     # Check if running in virtual environment
     if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
         print(f"Virtual Environment: Yes (Path: {sys.prefix})")
     else:
         print("Virtual Environment: No")
-    
+
     # Check for MLflow configuration
     mlflow_uri = os.getenv("MLFLOW_TRACKING_URI")
     if mlflow_uri:
         print(f"MLflow Tracking URI: {mlflow_uri}")
     else:
-        print("MLflow not configured. Run scripts/mlflow-setup.sh after deploying infrastructure.")
+        print("MLflow not configured. Run scripts/mlflow-setup.sh to set up MLflow.")
 
 if __name__ == "__main__":
     main()
@@ -218,12 +217,7 @@ Thumbs.db
 # uv/poetry/pipenv files
 uv.lock
 
-# Terraform
-terraform/.terraform/
-terraform/.terraform.lock.hcl
-terraform/terraform.tfstate
-terraform/terraform.tfstate.backup
-terraform/.terraform.tfstate.lock.info
+# No Terraform configuration
 
 # Environment variables
 .env
@@ -258,7 +252,7 @@ EOF
     chmod +x run.sh
     echo "Created run.sh for Unix-like systems"
   fi
-  
+
   return 0
 }
 
@@ -292,7 +286,7 @@ services:
       - MLFLOW_TRACKING_URI=\${MLFLOW_TRACKING_URI}
     ports:
       - "8000:8000"
-  
+
   # Uncomment to run MLflow locally for development
   # mlflow:
   #   image: ghcr.io/mlflow/mlflow:latest
@@ -315,9 +309,8 @@ env/
 .git/
 .gitignore
 .env
-terraform/
 EOF
-  
+
   return 0
 }
 
@@ -333,11 +326,11 @@ from mlflow.tracking import MlflowClient
 def setup_mlflow(tracking_uri=None, experiment_name=None):
     """
     Set up MLflow tracking.
-    
+
     Args:
         tracking_uri: MLflow tracking server URI
         experiment_name: Name of the experiment to use
-    
+
     Returns:
         experiment_id: ID of the created or existing experiment
     """
@@ -349,30 +342,30 @@ def setup_mlflow(tracking_uri=None, experiment_name=None):
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
-    
+
     # Use project name as experiment name if not provided
     if not experiment_name:
         experiment_name = os.path.basename(os.getcwd())
-    
+
     # Create or get experiment
     try:
         experiment_id = mlflow.create_experiment(experiment_name)
     except mlflow.exceptions.MlflowException:
         experiment_id = mlflow.get_experiment_by_name(experiment_name).experiment_id
-    
+
     # Set the experiment as active
     mlflow.set_experiment(experiment_name)
-    
+
     print(f"MLflow tracking URI: {mlflow.get_tracking_uri()}")
     print(f"MLflow experiment name: {experiment_name}")
     print(f"MLflow experiment ID: {experiment_id}")
-    
+
     return experiment_id
 EOF
 
   # Create setup script templates
   mkdir -p scripts
-  
+
   # Create MLflow setup script template
   cat << EOF > scripts/mlflow-setup.sh
 #!/bin/bash
@@ -380,16 +373,9 @@ EOF
 echo "MLflow setup script template - implement me!"
 EOF
   chmod +x scripts/mlflow-setup.sh
-  
-  # Create Terraform setup script template
-  mkdir -p terraform
-  cat << EOF > terraform/terraform-setup.sh
-#!/bin/bash
-# This script will be implemented to deploy Azure infrastructure
-echo "Terraform setup script template - implement me!"
-EOF
-  chmod +x terraform/terraform-setup.sh
-  
+
+  # No Terraform setup script needed
+
   return 0
 }
 
@@ -412,7 +398,7 @@ EOF
   else
     echo "pre-commit not found. Skipping pre-commit hook setup."
   fi
-  
+
   return 0
 }
 
@@ -435,5 +421,5 @@ else
 fi
 echo ""
 echo "Next steps:"
-echo "  1. Implement terraform/terraform-setup.sh to deploy Azure infrastructure"
-echo "  2. Implement scripts/mlflow-setup.sh to configure MLflow"
+echo "  1. Implement scripts/mlflow-setup.sh to configure MLflow"
+echo "  2. Start building your RAG pipeline in src/rag/"
