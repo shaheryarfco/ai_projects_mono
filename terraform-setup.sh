@@ -234,30 +234,16 @@ resource "azurerm_container_registry" "acr" {
   }
 }
 
-# Azure Database for PostgreSQL - Serverless (only pay when used)
+# PostgreSQL Flexible Server
 resource "azurerm_postgresql_flexible_server" "postgres" {
-  name                = "\${var.project_name}-\${var.environment}-psql"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
-  
-  # Use Burstable tier for cost optimization
-  sku_name = var.environment == "prod" ? "B_Standard_B1ms" : "B_Standard_B1s"
-  
-  storage_mb                   = 32768
-  backup_retention_days        = 7
-  geo_redundant_backup_enabled = var.environment == "prod" ? true : false
-  
-  administrator_login          = var.admin_username
-  administrator_password       = var.admin_password
-  version                      = "13"
-  
-  # Auto-stop after 1 hour of inactivity (dev only)
-  dynamic "high_availability" {
-    for_each = var.environment == "prod" ? [1] : []
-    content {
-      mode = "ZoneRedundant"
-    }
-  }
+  name                   = "\${var.project_name}-\${var.environment}-psql"
+  resource_group_name    = azurerm_resource_group.rg.name
+  location               = azurerm_resource_group.rg.location
+  version                = "13"
+  administrator_login    = var.admin_username
+  administrator_password = var.admin_password
+  storage_mb             = 32768
+  sku_name               = var.environment == "prod" ? "GP_Standard_D4s_v3" : "B_Standard_B1ms"
   
   tags = {
     Environment = var.environment
@@ -555,6 +541,7 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
 
 
 
