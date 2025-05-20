@@ -139,7 +139,7 @@ EOF
 
 # Ask which resources to deploy
 echo "Which resources would you like to deploy? (Enter comma-separated list)"
-echo "Options: all, storage, postgres, keyvault, container_registry, none"
+echo "Options: all, storage, postgres, keyvault, container_registry, function_app, logic_app, none"
 read -p "Resources to deploy (default: all): " RESOURCES_TO_DEPLOY
 
 # Default to all if empty
@@ -169,15 +169,9 @@ provider "azurerm" {
 # Get current client configuration
 data "azurerm_client_config" "current" {}
 
-# Resource Group
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-\${var.environment}-rg"
-  location = var.location
-  
-  tags = {
-    Environment = var.environment
-    Project     = var.project_name
-  }
+# Use existing shared resource group
+data "azurerm_resource_group" "shared_rg" {
+  name = var.shared_resource_group
 }
 EOF
 
@@ -187,8 +181,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"keyvault"* 
 # Key Vault
 resource "azurerm_key_vault" "kv" {
   name                = "\${replace(var.project_name, "-", "")}kv\${var.environment}"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.shared_rg.location
+  resource_group_name = data.azurerm_resource_group.shared_rg.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
   
@@ -219,8 +213,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"storage"* ]
 # Storage Account
 resource "azurerm_storage_account" "storage" {
   name                     = "\${replace(var.project_name, "-", "")}storage\${var.environment}"
-  resource_group_name      = azurerm_resource_group.rg.name
-  location                 = azurerm_resource_group.rg.location
+  resource_group_name      = data.azurerm_resource_group.shared_rg.name
+  location                 = data.azurerm_resource_group.shared_rg.location
   account_tier             = "Standard"
   account_replication_type = var.environment == "prod" ? "LRS" : "LRS"  # Changed from GRS to LRS for cost savings
   
@@ -253,8 +247,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"container_r
 # Container Registry
 resource "azurerm_container_registry" "acr" {
   name                = "\${replace(var.project_name, "-", "")}acr\${var.environment}"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.shared_rg.name
+  location            = data.azurerm_resource_group.shared_rg.location
   sku                 = "Basic"
   admin_enabled       = true
   
@@ -271,8 +265,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"postgres"* 
 # PostgreSQL Flexible Server
 resource "azurerm_postgresql_flexible_server" "postgres" {
   name                   = "\${var.project_name}-\${var.environment}-psql"
-  resource_group_name    = azurerm_resource_group.rg.name
-  location               = azurerm_resource_group.rg.location
+  resource_group_name    = data.azurerm_resource_group.shared_rg.name
+  location               = data.azurerm_resource_group.shared_rg.location
   version                = "13"
   administrator_login    = var.admin_username
   administrator_password = var.admin_password
@@ -295,19 +289,21 @@ resource "azurerm_postgresql_flexible_server_database" "mlflow_db" {
 EOF
 fi
 
-# Azure Function App for serverless compute (optional)
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"function_app"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Azure Function App for serverless compute
 resource "azurerm_service_plan" "app_service_plan" {
   name                = "\${var.project_name}-\${var.environment}-plan"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.shared_rg.location
+  resource_group_name = data.azurerm_resource_group.shared_rg.name
   os_type             = "Linux"
   sku_name            = "Y1"  # Consumption plan - only pay when functions execute
 }
 
 resource "azurerm_linux_function_app" "function_app" {
   name                       = "\${var.project_name}-\${var.environment}-function"
-  location                   = azurerm_resource_group.rg.location
-  resource_group_name        = azurerm_resource_group.rg.name
+  location                   = data.azurerm_resource_group.shared_rg.location
+  resource_group_name        = data.azurerm_resource_group.shared_rg.name
   service_plan_id            = azurerm_service_plan.app_service_plan.id
   storage_account_name       = azurerm_storage_account.storage.name
   storage_account_access_key = azurerm_storage_account.storage.primary_access_key
@@ -320,7 +316,6 @@ resource "azurerm_linux_function_app" "function_app" {
   
   app_settings = {
     "FUNCTIONS_WORKER_RUNTIME"    = "python"
-    "MLFLOW_TRACKING_URI"         = "http://\${azurerm_container_group.mlflow.fqdn}:5000"
     "AZURE_STORAGE_CONNECTION_STRING" = azurerm_storage_account.storage.primary_connection_string
   }
   
@@ -329,12 +324,16 @@ resource "azurerm_linux_function_app" "function_app" {
     Project     = var.project_name
   }
 }
+EOF
+fi
 
-# Logic App for automation (optional)
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"logic_app"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Logic App for automation
 resource "azurerm_logic_app_workflow" "auto_shutdown" {
   name                = "\${var.project_name}-\${var.environment}-auto-shutdown"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.shared_rg.location
+  resource_group_name = data.azurerm_resource_group.shared_rg.name
   
   # Logic Apps are consumption-based - only pay when they run
   
@@ -344,6 +343,7 @@ resource "azurerm_logic_app_workflow" "auto_shutdown" {
   }
 }
 EOF
+fi
 
 # Create outputs.tf
 cat << EOF > "$ENV_DIR/outputs.tf"
@@ -533,6 +533,7 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
 
 
 
