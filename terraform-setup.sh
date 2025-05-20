@@ -11,7 +11,7 @@ ENVIRONMENT=${1:-"dev"}  # Default to dev environment if not specified
 LOCATION=${2:-"centralindia"}  # Default to Central India if not specified
 
 # Define the shared resource group name for the environment
-SHARED_RG="ai-projects-${ENVIRONMENT}-rg"
+SHARED_RG="${PROJECT_NAME}-${ENVIRONMENT}-rg"
 
 # Define resource names for easy reference
 STORAGE_ACCT="${PROJECT_NAME//-/}storage${ENVIRONMENT}"
@@ -169,11 +169,11 @@ EOF
 if [ "$ENVIRONMENT" == "prod" ]; then
   SKU_TIER="Standard"
   INSTANCE_SIZE="Standard_B1s"
-  POSTGRES_SKU="GP_Standard_B1s"
+  POSTGRES_SKU="Standard_B1s"
 else
   SKU_TIER="Basic"
   INSTANCE_SIZE="Standard_B1s"
-  POSTGRES_SKU="B_Standard_B1s"
+  POSTGRES_SKU="Standard_B1s"
 fi
 
 cat << EOF > "$ENV_DIR/variables.tf"
@@ -234,7 +234,7 @@ read -p "Resources to deploy (default: all): " RESOURCES_TO_DEPLOY
 RESOURCES_TO_DEPLOY=${RESOURCES_TO_DEPLOY:-"all"}
 
 # Create main.tf with selected resources
-cat << EOF > "$ENV_DIR/main.tf"
+cat << 'EOF' > "$ENV_DIR/main.tf"
 terraform {
   required_providers {
     azurerm = {
@@ -251,41 +251,35 @@ provider "azurerm" {
       recover_soft_deleted_key_vaults = true
     }
   }
-  subscription_id = "$SUBSCRIPTION_ID"
+  subscription_id = "${SUBSCRIPTION_ID}"
 }
 
-# Get current client configuration
+# Get current client configuration from AzureRM provider
 data "azurerm_client_config" "current" {}
 
-# Use existing shared resource group or create if it doesn't exist
+# Create or use existing resource group
 resource "azurerm_resource_group" "shared_rg" {
   name     = var.shared_resource_group
   location = var.location
   
-  # Only create if it doesn't exist
-  lifecycle {
-    prevent_destroy = true
-  }
-  
   tags = {
     Environment = var.environment
-    Project     = "shared"
+    Project     = var.project_name
   }
 }
 EOF
 
 # Add resources based on selection
 if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"keyvault"* ]]; then
-  cat << EOF >> "$ENV_DIR/main.tf"
+  cat << 'EOF' >> "$ENV_DIR/main.tf"
 # Key Vault
 resource "azurerm_key_vault" "kv" {
-  name                = "\${replace(var.project_name, "-", "")}kv\${var.environment}"
+  name                = "${replace(var.project_name, "-", "")}kv${var.environment}"
   location            = azurerm_resource_group.shared_rg.location
   resource_group_name = azurerm_resource_group.shared_rg.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
   
-  # Set access policies as needed
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = data.azurerm_client_config.current.object_id
@@ -308,10 +302,10 @@ EOF
 fi
 
 if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"storage"* ]]; then
-  cat << EOF >> "$ENV_DIR/main.tf"
+  cat << 'EOF' >> "$ENV_DIR/main.tf"
 # Storage Account
 resource "azurerm_storage_account" "storage" {
-  name                     = "\${replace(var.project_name, "-", "")}storage\${var.environment}"
+  name                     = "${replace(var.project_name, "-", "")}storage${var.environment}"
   resource_group_name      = azurerm_resource_group.shared_rg.name
   location                 = azurerm_resource_group.shared_rg.location
   account_tier             = "Standard"
@@ -326,13 +320,7 @@ resource "azurerm_storage_account" "storage" {
   }
 }
 
-# Storage containers
-resource "azurerm_storage_container" "data" {
-  name                  = "data"
-  storage_account_name  = azurerm_storage_account.storage.name
-  container_access_type = "private"
-}
-
+# Storage container for MLflow artifacts
 resource "azurerm_storage_container" "mlflow_artifacts" {
   name                  = "mlflow-artifacts"
   storage_account_name  = azurerm_storage_account.storage.name
@@ -342,10 +330,10 @@ EOF
 fi
 
 if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"container_registry"* ]]; then
-  cat << EOF >> "$ENV_DIR/main.tf"
+  cat << 'EOF' >> "$ENV_DIR/main.tf"
 # Container Registry
 resource "azurerm_container_registry" "acr" {
-  name                = "\${replace(var.project_name, "-", "")}acr\${var.environment}"
+  name                = "${replace(var.project_name, "-", "")}acr${var.environment}"
   resource_group_name = azurerm_resource_group.shared_rg.name
   location            = azurerm_resource_group.shared_rg.location
   sku                 = "Basic"
@@ -370,7 +358,7 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   administrator_login    = var.admin_username
   administrator_password = var.admin_password
   storage_mb             = 32768
-  sku_name               = "B_Standard_B1s"  # Using B-series which requires fewer vCPUs
+  sku_name               = var.postgres_sku
   
   tags = {
     Environment = var.environment
@@ -389,10 +377,10 @@ EOF
 fi
 
 if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"function_app"* ]]; then
-  cat << EOF >> "$ENV_DIR/main.tf"
+  cat << 'EOF' >> "$ENV_DIR/main.tf"
 # Azure Function App for serverless compute
 resource "azurerm_service_plan" "app_service_plan" {
-  name                = "\${var.project_name}-\${var.environment}-plan"
+  name                = "${var.project_name}-${var.environment}-plan"
   location            = azurerm_resource_group.shared_rg.location
   resource_group_name = azurerm_resource_group.shared_rg.name
   os_type             = "Linux"
@@ -400,7 +388,7 @@ resource "azurerm_service_plan" "app_service_plan" {
 }
 
 resource "azurerm_linux_function_app" "function_app" {
-  name                       = "\${var.project_name}-\${var.environment}-function"
+  name                       = "${var.project_name}-${var.environment}-function"
   location                   = azurerm_resource_group.shared_rg.location
   resource_group_name        = azurerm_resource_group.shared_rg.name
   service_plan_id            = azurerm_service_plan.app_service_plan.id
@@ -685,3 +673,13 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
+
+
+
+
+
+
+
+
+
