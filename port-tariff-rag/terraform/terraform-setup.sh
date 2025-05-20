@@ -22,10 +22,10 @@ ACR_NAME="${PROJECT_NAME//-/}acr${ENVIRONMENT}"
 # Trap function to clean up resources on error
 cleanup_on_error() {
     local exit_code=$?
-    
+
     if [ $exit_code -ne 0 ]; then
         echo "Error detected (exit code $exit_code). Cleaning up resources..."
-        
+
         # Check if we're in the middle of a Terraform apply
         if [ -f "$ENV_DIR/terraform.tfstate" ]; then
             echo "Attempting to destroy partially created resources..."
@@ -33,35 +33,35 @@ cleanup_on_error() {
         else
             # Manual cleanup of resources that might have been created
             echo "Manually cleaning up resources..."
-            
+
             # Storage account
             if az storage account show --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" &> /dev/null; then
                 echo "Deleting storage account $STORAGE_ACCT..."
                 az storage account delete --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" --yes || true
             fi
-            
+
             # Key vault
             if az keyvault show --name "$KEY_VAULT" --resource-group "$SHARED_RG" &> /dev/null; then
                 echo "Deleting key vault $KEY_VAULT..."
                 az keyvault delete --name "$KEY_VAULT" --resource-group "$SHARED_RG" || true
             fi
-            
+
             # PostgreSQL server
             if az postgres flexible-server show --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" &> /dev/null; then
                 echo "Deleting PostgreSQL server $POSTGRES_SERVER..."
                 az postgres flexible-server delete --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" --yes || true
             fi
-            
+
             # Container registry
             if az acr show --name "$ACR_NAME" --resource-group "$SHARED_RG" &> /dev/null; then
                 echo "Deleting container registry $ACR_NAME..."
                 az acr delete --name "$ACR_NAME" --resource-group "$SHARED_RG" --yes || true
             fi
         fi
-        
+
         echo "Cleanup completed. Please check Azure portal to ensure all resources were properly removed."
     fi
-    
+
     exit $exit_code
 }
 
@@ -77,42 +77,42 @@ read CLEANUP_RESOURCES
 
 if [[ "$CLEANUP_RESOURCES" == "y" || "$CLEANUP_RESOURCES" == "Y" ]]; then
     echo "Cleaning up resources for project $PROJECT_NAME in $ENVIRONMENT environment..."
-    
+
     # Check if the resource group exists
     if az group show --name "$SHARED_RG" &> /dev/null; then
         echo "Deleting project-specific resources from $SHARED_RG..."
-        
+
         # Delete project-specific resources by name pattern
         # Storage account
         if az storage account show --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" &> /dev/null; then
             echo "Deleting storage account $STORAGE_ACCT..."
             az storage account delete --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" --yes
         fi
-        
+
         # Key vault
         if az keyvault show --name "$KEY_VAULT" --resource-group "$SHARED_RG" &> /dev/null; then
             echo "Deleting key vault $KEY_VAULT..."
             az keyvault delete --name "$KEY_VAULT" --resource-group "$SHARED_RG"
         fi
-        
+
         # PostgreSQL server
         if az postgres flexible-server show --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" &> /dev/null; then
             echo "Deleting PostgreSQL server $POSTGRES_SERVER..."
             az postgres flexible-server delete --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" --yes
         fi
-        
+
         # Container registry
         if az acr show --name "$ACR_NAME" --resource-group "$SHARED_RG" &> /dev/null; then
             echo "Deleting container registry $ACR_NAME..."
             az acr delete --name "$ACR_NAME" --resource-group "$SHARED_RG" --yes
         fi
-        
+
         echo "Project-specific resources cleaned up."
     else
         echo "Creating shared resource group $SHARED_RG..."
         az group create --name "$SHARED_RG" --location "$LOCATION"
     fi
-    
+
     echo "Cleanup completed."
 fi
 
@@ -169,11 +169,11 @@ EOF
 if [ "$ENVIRONMENT" == "prod" ]; then
   SKU_TIER="Standard"
   INSTANCE_SIZE="Standard_B1s"
-  POSTGRES_SKU="Standard_B1s"
+  POSTGRES_SKU="GP_Standard_D2s_v3"  # Production tier
 else
   SKU_TIER="Basic"
   INSTANCE_SIZE="Standard_B1s"
-  POSTGRES_SKU="Standard_B1s"
+  POSTGRES_SKU="B_Standard_B1ms"  # Basic tier
 fi
 
 cat << EOF > "$ENV_DIR/variables.tf"
@@ -261,7 +261,7 @@ data "azurerm_client_config" "current" {}
 resource "azurerm_resource_group" "shared_rg" {
   name     = var.shared_resource_group
   location = var.location
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -279,20 +279,20 @@ resource "azurerm_key_vault" "kv" {
   resource_group_name = azurerm_resource_group.shared_rg.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
-  
+
   access_policy {
     tenant_id = data.azurerm_client_config.current.tenant_id
     object_id = data.azurerm_client_config.current.object_id
-    
+
     key_permissions = [
       "Get", "List", "Create", "Delete", "Update",
     ]
-    
+
     secret_permissions = [
       "Get", "List", "Set", "Delete",
     ]
   }
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -310,10 +310,10 @@ resource "azurerm_storage_account" "storage" {
   location                 = azurerm_resource_group.shared_rg.location
   account_tier             = "Standard"
   account_replication_type = var.environment == "prod" ? "LRS" : "LRS"  # Changed from GRS to LRS for cost savings
-  
-  # Enable hierarchical namespace for cost optimization
-  is_hns_enabled = true
-  
+
+  # Standard storage account configuration
+  is_hns_enabled = false
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -338,7 +338,7 @@ resource "azurerm_container_registry" "acr" {
   location            = azurerm_resource_group.shared_rg.location
   sku                 = "Basic"
   admin_enabled       = true
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -359,7 +359,7 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   administrator_password = var.admin_password
   storage_mb             = 32768
   sku_name               = var.postgres_sku
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -394,18 +394,18 @@ resource "azurerm_linux_function_app" "function_app" {
   service_plan_id            = azurerm_service_plan.app_service_plan.id
   storage_account_name       = azurerm_storage_account.storage.name
   storage_account_access_key = azurerm_storage_account.storage.primary_access_key
-  
+
   site_config {
     application_stack {
       python_version = "3.10"
     }
   }
-  
+
   app_settings = {
     "FUNCTIONS_WORKER_RUNTIME"    = "python"
     "AZURE_STORAGE_CONNECTION_STRING" = azurerm_storage_account.storage.primary_connection_string
   }
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -421,9 +421,9 @@ resource "azurerm_logic_app_workflow" "auto_shutdown" {
   name                = "\${var.project_name}-\${var.environment}-auto-shutdown"
   location            = azurerm_resource_group.shared_rg.location
   resource_group_name = azurerm_resource_group.shared_rg.name
-  
+
   # Logic Apps are consumption-based - only pay when they run
-  
+
   tags = {
     Environment = var.environment
     Project     = var.project_name
@@ -461,7 +461,7 @@ resource "azurerm_container_group" "mlflow" {
     }
 
     commands = [
-      "mlflow", "server", 
+      "mlflow", "server",
       "--host", "0.0.0.0",
       "--port", "5000",
       "--backend-store-uri", "postgresql://${var.admin_username}:${var.admin_password}@${azurerm_postgresql_flexible_server.postgres.fqdn}:5432/${azurerm_postgresql_flexible_server_database.mlflow_db.name}",
@@ -595,10 +595,10 @@ read -p "Do you want to set up a remote state backend in Azure for $ENVIRONMENT?
 if [[ "$SETUP_BACKEND" == "y" || "$SETUP_BACKEND" == "Y" ]]; then
     echo "Setting up Terraform state backend..."
     ./setup_backend.sh
-    
+
     # Export the storage account key for Terraform - with proper quoting
     export ARM_ACCESS_KEY="$ACCOUNT_KEY"
-    
+
     # Update backend.tf to use Azure
     cat << EOF > "$ENV_DIR/backend.tf"
 terraform {
@@ -610,7 +610,7 @@ terraform {
   }
 }
 EOF
-    
+
     # Reinitialize Terraform with the new backend
     echo "Reinitializing Terraform with Azure backend..."
     terraform init -reconfigure
@@ -639,14 +639,14 @@ read -p "Do you want to apply the Terraform plan for $ENVIRONMENT? (y/n): " APPL
 if [[ "$APPLY_PLAN" == "y" || "$APPLY_PLAN" == "Y" ]]; then
     echo "Applying Terraform plan for $ENVIRONMENT environment..."
     terraform apply tfplan
-    
+
     # Generate .env file from outputs
     echo "Generating .env file for $ENVIRONMENT environment..."
     terraform output -json | jq -r 'to_entries | .[] | "\(.key)=\(.value.value)"' > ../../.env.$ENVIRONMENT
-    
+
     echo "Infrastructure deployment complete for $ENVIRONMENT environment!"
     echo "Environment-specific .env file created at: ../../.env.$ENVIRONMENT"
-    
+
     # Create a symlink to the current environment .env file
     ln -sf .env.$ENVIRONMENT ../../.env
     echo "Created symlink .env -> .env.$ENVIRONMENT"
