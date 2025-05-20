@@ -2,32 +2,115 @@
 # Terraform setup script for Azure infrastructure deployment
 # This script creates and configures Azure resources for ML projects
 
+# Enable error tracing and exit on error
 set -e
 
 # Get the project name from the current directory or parent directory
 PROJECT_NAME=$(basename $(cd .. && pwd))
 ENVIRONMENT=${1:-"dev"}  # Default to dev environment if not specified
-LOCATION=${2:-"centralindia"}  # Default to East US if not specified
+LOCATION=${2:-"centralindia"}  # Default to Central India if not specified
+
+# Define the shared resource group name for the environment
+SHARED_RG="ai-projects-${ENVIRONMENT}-rg"
+
+# Define resource names for easy reference
+STORAGE_ACCT="${PROJECT_NAME//-/}storage${ENVIRONMENT}"
+KEY_VAULT="${PROJECT_NAME//-/}kv${ENVIRONMENT}"
+POSTGRES_SERVER="${PROJECT_NAME}-${ENVIRONMENT}-psql"
+ACR_NAME="${PROJECT_NAME//-/}acr${ENVIRONMENT}"
+
+# Trap function to clean up resources on error
+cleanup_on_error() {
+    local exit_code=$?
+    
+    if [ $exit_code -ne 0 ]; then
+        echo "Error detected (exit code $exit_code). Cleaning up resources..."
+        
+        # Check if we're in the middle of a Terraform apply
+        if [ -f "$ENV_DIR/terraform.tfstate" ]; then
+            echo "Attempting to destroy partially created resources..."
+            cd "$ENV_DIR" && terraform destroy -auto-approve || true
+        else
+            # Manual cleanup of resources that might have been created
+            echo "Manually cleaning up resources..."
+            
+            # Storage account
+            if az storage account show --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting storage account $STORAGE_ACCT..."
+                az storage account delete --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" --yes || true
+            fi
+            
+            # Key vault
+            if az keyvault show --name "$KEY_VAULT" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting key vault $KEY_VAULT..."
+                az keyvault delete --name "$KEY_VAULT" --resource-group "$SHARED_RG" || true
+            fi
+            
+            # PostgreSQL server
+            if az postgres flexible-server show --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting PostgreSQL server $POSTGRES_SERVER..."
+                az postgres flexible-server delete --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" --yes || true
+            fi
+            
+            # Container registry
+            if az acr show --name "$ACR_NAME" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting container registry $ACR_NAME..."
+                az acr delete --name "$ACR_NAME" --resource-group "$SHARED_RG" --yes || true
+            fi
+        fi
+        
+        echo "Cleanup completed. Please check Azure portal to ensure all resources were properly removed."
+    fi
+    
+    exit $exit_code
+}
+
+# Set up trap to call cleanup function on error
+trap cleanup_on_error ERR INT TERM
 
 echo "Setting up Terraform for project: $PROJECT_NAME ($ENVIRONMENT environment)"
+echo "Using shared resource group: $SHARED_RG"
 
 # Add cleanup option at the beginning of the script
-echo "Would you like to clean up any existing resources from failed deployments before proceeding? (y/n): "
+echo "Would you like to clean up any existing resources for this project before proceeding? (y/n): "
 read CLEANUP_RESOURCES
 
 if [[ "$CLEANUP_RESOURCES" == "y" || "$CLEANUP_RESOURCES" == "Y" ]]; then
-    echo "Cleaning up resources from previous deployments..."
+    echo "Cleaning up resources for project $PROJECT_NAME in $ENVIRONMENT environment..."
     
     # Check if the resource group exists
-    if az group show --name "${PROJECT_NAME}-${ENVIRONMENT}-rg" &> /dev/null; then
-        echo "Deleting resource group ${PROJECT_NAME}-${ENVIRONMENT}-rg..."
-        az group delete --name "${PROJECT_NAME}-${ENVIRONMENT}-rg" --yes --no-wait
+    if az group show --name "$SHARED_RG" &> /dev/null; then
+        echo "Deleting project-specific resources from $SHARED_RG..."
         
-        # Wait for resource group deletion to complete
-        echo "Waiting for resource group deletion to complete..."
-        az group wait --name "${PROJECT_NAME}-${ENVIRONMENT}-rg" --deleted
+        # Delete project-specific resources by name pattern
+        # Storage account
+        if az storage account show --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" &> /dev/null; then
+            echo "Deleting storage account $STORAGE_ACCT..."
+            az storage account delete --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" --yes
+        fi
+        
+        # Key vault
+        if az keyvault show --name "$KEY_VAULT" --resource-group "$SHARED_RG" &> /dev/null; then
+            echo "Deleting key vault $KEY_VAULT..."
+            az keyvault delete --name "$KEY_VAULT" --resource-group "$SHARED_RG"
+        fi
+        
+        # PostgreSQL server
+        if az postgres flexible-server show --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" &> /dev/null; then
+            echo "Deleting PostgreSQL server $POSTGRES_SERVER..."
+            az postgres flexible-server delete --name "$POSTGRES_SERVER" --resource-group "$SHARED_RG" --yes
+        fi
+        
+        # Container registry
+        if az acr show --name "$ACR_NAME" --resource-group "$SHARED_RG" &> /dev/null; then
+            echo "Deleting container registry $ACR_NAME..."
+            az acr delete --name "$ACR_NAME" --resource-group "$SHARED_RG" --yes
+        fi
+        
+        echo "Project-specific resources cleaned up."
     else
-        echo "No existing resource group found."
+        echo "Creating shared resource group $SHARED_RG..."
+        az group create --name "$SHARED_RG" --location "$LOCATION"
     fi
     
     echo "Cleanup completed."
@@ -85,11 +168,11 @@ EOF
 # Create variables.tf with environment-specific defaults
 if [ "$ENVIRONMENT" == "prod" ]; then
   SKU_TIER="Standard"
-  INSTANCE_SIZE="Standard_B1s"  # Changed from D2s_v3 to B1s (smaller)
-  POSTGRES_SKU="GP_Standard_B1s"  # Changed to smaller SKU
+  INSTANCE_SIZE="Standard_B1s"
+  POSTGRES_SKU="GP_Standard_B1s"
 else
   SKU_TIER="Basic"
-  INSTANCE_SIZE="Standard_B1s"  # Even smaller instance
+  INSTANCE_SIZE="Standard_B1s"
   POSTGRES_SKU="B_Standard_B1s"
 fi
 
@@ -107,6 +190,11 @@ variable "location" {
 variable "environment" {
   description = "Environment (dev, test, prod)"
   default     = "$ENVIRONMENT"
+}
+
+variable "shared_resource_group" {
+  description = "Shared resource group for all projects in this environment"
+  default     = "$SHARED_RG"
 }
 
 variable "admin_username" {
@@ -139,7 +227,7 @@ EOF
 
 # Ask which resources to deploy
 echo "Which resources would you like to deploy? (Enter comma-separated list)"
-echo "Options: all, storage, postgres, keyvault, container_registry, none"
+echo "Options: all, storage, postgres, keyvault, container_registry, function_app, logic_app, mlflow, none"
 read -p "Resources to deploy (default: all): " RESOURCES_TO_DEPLOY
 
 # Default to all if empty
@@ -169,14 +257,19 @@ provider "azurerm" {
 # Get current client configuration
 data "azurerm_client_config" "current" {}
 
-# Resource Group
-resource "azurerm_resource_group" "rg" {
-  name     = "\${var.project_name}-\${var.environment}-rg"
+# Use existing shared resource group or create if it doesn't exist
+resource "azurerm_resource_group" "shared_rg" {
+  name     = var.shared_resource_group
   location = var.location
+  
+  # Only create if it doesn't exist
+  lifecycle {
+    prevent_destroy = true
+  }
   
   tags = {
     Environment = var.environment
-    Project     = var.project_name
+    Project     = "shared"
   }
 }
 EOF
@@ -187,8 +280,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"keyvault"* 
 # Key Vault
 resource "azurerm_key_vault" "kv" {
   name                = "\${replace(var.project_name, "-", "")}kv\${var.environment}"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.shared_rg.location
+  resource_group_name = azurerm_resource_group.shared_rg.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
   
@@ -219,8 +312,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"storage"* ]
 # Storage Account
 resource "azurerm_storage_account" "storage" {
   name                     = "\${replace(var.project_name, "-", "")}storage\${var.environment}"
-  resource_group_name      = azurerm_resource_group.rg.name
-  location                 = azurerm_resource_group.rg.location
+  resource_group_name      = azurerm_resource_group.shared_rg.name
+  location                 = azurerm_resource_group.shared_rg.location
   account_tier             = "Standard"
   account_replication_type = var.environment == "prod" ? "LRS" : "LRS"  # Changed from GRS to LRS for cost savings
   
@@ -253,8 +346,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"container_r
 # Container Registry
 resource "azurerm_container_registry" "acr" {
   name                = "\${replace(var.project_name, "-", "")}acr\${var.environment}"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.shared_rg.name
+  location            = azurerm_resource_group.shared_rg.location
   sku                 = "Basic"
   admin_enabled       = true
   
@@ -271,8 +364,8 @@ if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"postgres"* 
 # PostgreSQL Flexible Server
 resource "azurerm_postgresql_flexible_server" "postgres" {
   name                   = "\${var.project_name}-\${var.environment}-psql"
-  resource_group_name    = azurerm_resource_group.rg.name
-  location               = azurerm_resource_group.rg.location
+  resource_group_name    = azurerm_resource_group.shared_rg.name
+  location               = azurerm_resource_group.shared_rg.location
   version                = "13"
   administrator_login    = var.admin_username
   administrator_password = var.admin_password
@@ -295,19 +388,21 @@ resource "azurerm_postgresql_flexible_server_database" "mlflow_db" {
 EOF
 fi
 
-# Azure Function App for serverless compute (optional)
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"function_app"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Azure Function App for serverless compute
 resource "azurerm_service_plan" "app_service_plan" {
   name                = "\${var.project_name}-\${var.environment}-plan"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.shared_rg.location
+  resource_group_name = azurerm_resource_group.shared_rg.name
   os_type             = "Linux"
   sku_name            = "Y1"  # Consumption plan - only pay when functions execute
 }
 
 resource "azurerm_linux_function_app" "function_app" {
   name                       = "\${var.project_name}-\${var.environment}-function"
-  location                   = azurerm_resource_group.rg.location
-  resource_group_name        = azurerm_resource_group.rg.name
+  location                   = azurerm_resource_group.shared_rg.location
+  resource_group_name        = azurerm_resource_group.shared_rg.name
   service_plan_id            = azurerm_service_plan.app_service_plan.id
   storage_account_name       = azurerm_storage_account.storage.name
   storage_account_access_key = azurerm_storage_account.storage.primary_access_key
@@ -320,7 +415,6 @@ resource "azurerm_linux_function_app" "function_app" {
   
   app_settings = {
     "FUNCTIONS_WORKER_RUNTIME"    = "python"
-    "MLFLOW_TRACKING_URI"         = "http://\${azurerm_container_group.mlflow.fqdn}:5000"
     "AZURE_STORAGE_CONNECTION_STRING" = azurerm_storage_account.storage.primary_connection_string
   }
   
@@ -329,12 +423,16 @@ resource "azurerm_linux_function_app" "function_app" {
     Project     = var.project_name
   }
 }
+EOF
+fi
 
-# Logic App for automation (optional)
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"logic_app"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Logic App for automation
 resource "azurerm_logic_app_workflow" "auto_shutdown" {
   name                = "\${var.project_name}-\${var.environment}-auto-shutdown"
-  location            = azurerm_resource_group.rg.location
-  resource_group_name = azurerm_resource_group.rg.name
+  location            = azurerm_resource_group.shared_rg.location
+  resource_group_name = azurerm_resource_group.shared_rg.name
   
   # Logic Apps are consumption-based - only pay when they run
   
@@ -344,11 +442,57 @@ resource "azurerm_logic_app_workflow" "auto_shutdown" {
   }
 }
 EOF
+fi
+
+if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"mlflow"* ]]; then
+  cat << EOF >> "$ENV_DIR/main.tf"
+# Container Instance for MLflow
+resource "azurerm_container_group" "mlflow" {
+  name                = "\${var.project_name}-\${var.environment}-mlflow"
+  location            = azurerm_resource_group.shared_rg.location
+  resource_group_name = azurerm_resource_group.shared_rg.name
+  ip_address_type     = "Public"
+  dns_name_label      = "\${var.project_name}-\${var.environment}-mlflow"
+  os_type             = "Linux"
+
+  container {
+    name   = "mlflow"
+    image  = "ghcr.io/mlflow/mlflow:latest"
+    cpu    = "1.0"
+    memory = "1.5"
+
+    ports {
+      port     = 5000
+      protocol = "TCP"
+    }
+
+    environment_variables = {
+      "MLFLOW_BACKEND_STORE_URI" = "postgresql://${var.admin_username}:${var.admin_password}@${azurerm_postgresql_flexible_server.postgres.fqdn}:5432/${azurerm_postgresql_flexible_server_database.mlflow_db.name}"
+      "MLFLOW_DEFAULT_ARTIFACT_ROOT" = "wasbs://${azurerm_storage_container.mlflow_artifacts.name}@${azurerm_storage_account.storage.name}.blob.core.windows.net/"
+      "AZURE_STORAGE_ACCESS_KEY" = azurerm_storage_account.storage.primary_access_key
+    }
+
+    commands = [
+      "mlflow", "server", 
+      "--host", "0.0.0.0",
+      "--port", "5000",
+      "--backend-store-uri", "postgresql://${var.admin_username}:${var.admin_password}@${azurerm_postgresql_flexible_server.postgres.fqdn}:5432/${azurerm_postgresql_flexible_server_database.mlflow_db.name}",
+      "--default-artifact-root", "wasbs://${azurerm_storage_container.mlflow_artifacts.name}@${azurerm_storage_account.storage.name}.blob.core.windows.net/"
+    ]
+  }
+
+  tags = {
+    Environment = var.environment
+    Project     = var.project_name
+  }
+}
+EOF
+fi
 
 # Create outputs.tf
 cat << EOF > "$ENV_DIR/outputs.tf"
 output "resource_group_name" {
-  value = azurerm_resource_group.rg.name
+  value = azurerm_resource_group.shared_rg.name
 }
 
 output "environment" {
@@ -533,6 +677,7 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
 
 
 
