@@ -456,15 +456,18 @@ az storage container create \
   --name tfstate \
   --account-name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}"
 
-# Get storage account key
+# Get storage account key - use proper quoting and remove special characters
 ACCOUNT_KEY=$(az storage account keys list \
   --resource-group "${PROJECT_NAME}-tfstate-rg" \
   --account-name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}" \
   --query '[0].value' -o tsv)
 
-echo "Storage account key: \$ACCOUNT_KEY"
+# Clean the key to ensure it's properly formatted
+ACCOUNT_KEY=$(echo "$ACCOUNT_KEY" | tr -d '\r\n')
+
+echo "Storage account key: $ACCOUNT_KEY"
 echo "Set the following environment variables to initialize Terraform:"
-echo "export ARM_ACCESS_KEY=\$ACCOUNT_KEY"
+echo "export ARM_ACCESS_KEY=$ACCOUNT_KEY"
 EOF
 chmod +x setup_backend.sh
 
@@ -475,12 +478,9 @@ if [[ "$SETUP_BACKEND" == "y" || "$SETUP_BACKEND" == "Y" ]]; then
     echo "Setting up Terraform state backend..."
     ./setup_backend.sh
     
-    # Export the storage account key for Terraform
-    export ARM_ACCESS_KEY=$(az storage account keys list \
-      --resource-group "${PROJECT_NAME}-tfstate-rg" \
-      --account-name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}" \
-      --query '[0].value' -o tsv)
-      
+    # Export the storage account key for Terraform - with proper quoting
+    export ARM_ACCESS_KEY="$ACCOUNT_KEY"
+    
     # Update backend.tf to use Azure
     cat << EOF > "$ENV_DIR/backend.tf"
 terraform {
@@ -496,6 +496,12 @@ EOF
     # Reinitialize Terraform with the new backend
     echo "Reinitializing Terraform with Azure backend..."
     terraform init -reconfigure
+fi
+
+# Make sure the environment directory exists and has the necessary files
+if [ ! -d "$ENV_DIR" ]; then
+  echo "Error: Environment directory $ENV_DIR does not exist."
+  exit 1
 fi
 
 # Change to the environment directory
@@ -549,3 +555,6 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
+
+
