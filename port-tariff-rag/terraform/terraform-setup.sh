@@ -234,7 +234,7 @@ read -p "Resources to deploy (default: all): " RESOURCES_TO_DEPLOY
 RESOURCES_TO_DEPLOY=${RESOURCES_TO_DEPLOY:-"all"}
 
 # Create main.tf with selected resources
-cat << 'EOF' > "$ENV_DIR/main.tf"
+cat << EOF > "$ENV_DIR/main.tf"
 terraform {
   required_providers {
     azurerm = {
@@ -251,7 +251,7 @@ provider "azurerm" {
       recover_soft_deleted_key_vaults = true
     }
   }
-  subscription_id = "${SUBSCRIPTION_ID}"
+  subscription_id = "$SUBSCRIPTION_ID"
 }
 
 # Get current client configuration from AzureRM provider
@@ -673,6 +673,7 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
+
 
 
 

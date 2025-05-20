@@ -11,7 +11,7 @@ az storage account create   --name "porttariffragtfstatedev"   --resource-group 
 az storage container create   --name tfstate   --account-name "porttariffragtfstatedev"
 
 # Get storage account key - use proper quoting and remove special characters
-ACCOUNT_KEY=/XhQwsZlHKRK9KnNUSKMvUcUih17Irnwaw4omyg3KdhDglfoqJdtyU1ivSSfwL5L1amQ+nVEh3iZ+ASt5Rtmpw==
+ACCOUNT_KEY=
 
 # Clean the key to ensure it's properly formatted
 ACCOUNT_KEY=
