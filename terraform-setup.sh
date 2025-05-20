@@ -61,6 +61,16 @@ terraform {
 EOF
 
 # Create variables.tf with environment-specific defaults
+if [ "$ENVIRONMENT" == "prod" ]; then
+  SKU_TIER="Standard"
+  INSTANCE_SIZE="Standard_D2s_v3"
+  POSTGRES_SKU="GP_Gen5_2"
+else
+  SKU_TIER="Basic"
+  INSTANCE_SIZE="Standard_B1ms"
+  POSTGRES_SKU="B_Gen5_1"
+fi
+
 cat << EOF > "$ENV_DIR/variables.tf"
 variable "project_name" {
   description = "Name of the project"
@@ -91,17 +101,17 @@ variable "admin_password" {
 # Environment-specific variables
 variable "sku_tier" {
   description = "SKU tier for resources"
-  default     = "${ENVIRONMENT == "prod" ? "Standard" : "Basic"}"
+  default     = "$SKU_TIER"
 }
 
 variable "instance_size" {
   description = "Size of compute instances"
-  default     = "${ENVIRONMENT == "prod" ? "Standard_D2s_v3" : "Standard_B1ms"}"
+  default     = "$INSTANCE_SIZE"
 }
 
 variable "postgres_sku" {
   description = "SKU for PostgreSQL"
-  default     = "${ENVIRONMENT == "prod" ? "GP_Gen5_2" : "B_Gen5_1"}"
+  default     = "$POSTGRES_SKU"
 }
 EOF
 
@@ -435,21 +445,21 @@ cat << EOF > setup_backend.sh
 az group create --name "${PROJECT_NAME}-tfstate-rg" --location "$LOCATION"
 
 # Create storage account for Terraform state
-az storage account create \\
-  --name "${PROJECT_NAME}tfstate${ENVIRONMENT}" \\
-  --resource-group "${PROJECT_NAME}-tfstate-rg" \\
-  --sku Standard_LRS \\
+az storage account create \
+  --name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}" \
+  --resource-group "${PROJECT_NAME}-tfstate-rg" \
+  --sku Standard_LRS \
   --encryption-services blob
 
 # Create blob container for Terraform state
-az storage container create \\
-  --name tfstate \\
-  --account-name "${PROJECT_NAME}tfstate${ENVIRONMENT}"
+az storage container create \
+  --name tfstate \
+  --account-name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}"
 
 # Get storage account key
-ACCOUNT_KEY=\$(az storage account keys list \\
-  --resource-group "${PROJECT_NAME}-tfstate-rg" \\
-  --account-name "${PROJECT_NAME}tfstate${ENVIRONMENT}" \\
+ACCOUNT_KEY=$(az storage account keys list \
+  --resource-group "${PROJECT_NAME}-tfstate-rg" \
+  --account-name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}" \
   --query '[0].value' -o tsv)
 
 echo "Storage account key: \$ACCOUNT_KEY"
@@ -468,7 +478,7 @@ if [[ "$SETUP_BACKEND" == "y" || "$SETUP_BACKEND" == "Y" ]]; then
     # Export the storage account key for Terraform
     export ARM_ACCESS_KEY=$(az storage account keys list \
       --resource-group "${PROJECT_NAME}-tfstate-rg" \
-      --account-name "${PROJECT_NAME}tfstate${ENVIRONMENT}" \
+      --account-name "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}" \
       --query '[0].value' -o tsv)
       
     # Update backend.tf to use Azure
@@ -476,7 +486,7 @@ if [[ "$SETUP_BACKEND" == "y" || "$SETUP_BACKEND" == "Y" ]]; then
 terraform {
   backend "azurerm" {
     resource_group_name  = "${PROJECT_NAME}-tfstate-rg"
-    storage_account_name = "${PROJECT_NAME}tfstate${ENVIRONMENT}"
+    storage_account_name = "${PROJECT_NAME//-/}tfstate${ENVIRONMENT}"
     container_name       = "tfstate"
     key                  = "${PROJECT_NAME}-${ENVIRONMENT}.tfstate"
   }
@@ -539,12 +549,3 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
-
-
-
-
-
-
-
-
-
