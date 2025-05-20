@@ -445,14 +445,14 @@ EOF
 fi
 
 if [[ "$RESOURCES_TO_DEPLOY" == "all" || "$RESOURCES_TO_DEPLOY" == *"mlflow"* ]]; then
-  cat << EOF >> "$ENV_DIR/main.tf"
+  cat << 'EOF' >> "$ENV_DIR/main.tf"
 # Container Instance for MLflow
 resource "azurerm_container_group" "mlflow" {
-  name                = "\${var.project_name}-\${var.environment}-mlflow"
+  name                = "${var.project_name}-${var.environment}-mlflow"
   location            = azurerm_resource_group.shared_rg.location
   resource_group_name = azurerm_resource_group.shared_rg.name
   ip_address_type     = "Public"
-  dns_name_label      = "\${var.project_name}-\${var.environment}-mlflow"
+  dns_name_label      = "${var.project_name}-${var.environment}-mlflow"
   os_type             = "Linux"
 
   container {
@@ -490,7 +490,7 @@ EOF
 fi
 
 # Create outputs.tf
-cat << EOF > "$ENV_DIR/outputs.tf"
+cat << 'EOF' > "$ENV_DIR/outputs.tf"
 output "resource_group_name" {
   value = azurerm_resource_group.shared_rg.name
 }
@@ -500,7 +500,7 @@ output "environment" {
 }
 
 output "subscription_id" {
-  value = "$SUBSCRIPTION_ID"
+  value = data.azurerm_client_config.current.subscription_id
 }
 
 output "storage_account_name" {
@@ -525,11 +525,19 @@ output "postgres_server_fqdn" {
 }
 
 output "mlflow_tracking_uri" {
-  value = "http://\${azurerm_container_group.mlflow.fqdn}:5000"
+  value = "http://${azurerm_container_group.mlflow.fqdn}:5000"
 }
 
 output "mlflow_artifact_uri" {
-  value = "wasbs://\${azurerm_storage_container.mlflow_artifacts.name}@\${azurerm_storage_account.storage.name}.blob.core.windows.net/"
+  value = "wasbs://${azurerm_storage_container.mlflow_artifacts.name}@${azurerm_storage_account.storage.name}.blob.core.windows.net/"
+}
+
+output "key_vault_name" {
+  value = azurerm_key_vault.kv.name
+}
+
+output "key_vault_uri" {
+  value = azurerm_key_vault.kv.vault_uri
 }
 EOF
 
@@ -549,8 +557,8 @@ MLFLOW_ARTIFACT_URI=\${mlflow_artifact_uri}
 
 # PostgreSQL
 POSTGRES_SERVER=\${postgres_server_fqdn}
-POSTGRES_USER=\${admin_username}
-POSTGRES_PASSWORD=\${admin_password}
+POSTGRES_USER=$admin_username
+POSTGRES_PASSWORD=$admin_password
 POSTGRES_DB=mlflow
 
 # Key Vault
@@ -677,14 +685,3 @@ chmod +x destroy.sh
 
 echo "Terraform setup complete for $ENVIRONMENT environment!"
 echo "To destroy resources in the future, run: ./env/$ENVIRONMENT/destroy.sh"
-
-
-
-
-
-
-
-
-
-
-
