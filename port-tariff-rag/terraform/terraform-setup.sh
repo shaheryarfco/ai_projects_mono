@@ -28,11 +28,46 @@ cleanup_on_error() {
 
         # Check if we're in the middle of a Terraform apply
         if [ -f "$ENV_DIR/terraform.tfstate" ]; then
-            echo "Attempting to destroy partially created resources..."
+            echo "Attempting to destroy partially created resources using Terraform..."
             cd "$ENV_DIR" && terraform destroy -auto-approve || true
         else
             # Manual cleanup of resources that might have been created
             echo "Manually cleaning up resources..."
+
+            # Function App
+            FUNCTION_APP="${PROJECT_NAME}-${ENVIRONMENT}-function"
+            if az functionapp show --name "$FUNCTION_APP" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting Function App $FUNCTION_APP..."
+                az functionapp delete --name "$FUNCTION_APP" --resource-group "$SHARED_RG" --yes || true
+            fi
+
+            # App Service Plan
+            APP_SERVICE_PLAN="${PROJECT_NAME}-${ENVIRONMENT}-plan"
+            if az appservice plan show --name "$APP_SERVICE_PLAN" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting App Service Plan $APP_SERVICE_PLAN..."
+                az appservice plan delete --name "$APP_SERVICE_PLAN" --resource-group "$SHARED_RG" --yes || true
+            fi
+
+            # Logic App
+            LOGIC_APP="${PROJECT_NAME}-${ENVIRONMENT}-auto-shutdown"
+            if az logic workflow show --name "$LOGIC_APP" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting Logic App $LOGIC_APP..."
+                az logic workflow delete --name "$LOGIC_APP" --resource-group "$SHARED_RG" --yes || true
+            fi
+
+            # Container Instance for MLflow
+            CONTAINER_GROUP="${PROJECT_NAME}-${ENVIRONMENT}-mlflow"
+            if az container show --name "$CONTAINER_GROUP" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Deleting Container Group $CONTAINER_GROUP..."
+                az container delete --name "$CONTAINER_GROUP" --resource-group "$SHARED_RG" --yes || true
+            fi
+
+            # Storage container
+            if az storage account show --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" &> /dev/null; then
+                echo "Checking for storage containers..."
+                STORAGE_KEY=$(az storage account keys list --account-name "$STORAGE_ACCT" --resource-group "$SHARED_RG" --query '[0].value' -o tsv)
+                az storage container delete --name "mlflow-artifacts" --account-name "$STORAGE_ACCT" --account-key "$STORAGE_KEY" || true
+            fi
 
             # Storage account
             if az storage account show --name "$STORAGE_ACCT" --resource-group "$SHARED_RG" &> /dev/null; then
@@ -56,6 +91,18 @@ cleanup_on_error() {
             if az acr show --name "$ACR_NAME" --resource-group "$SHARED_RG" &> /dev/null; then
                 echo "Deleting container registry $ACR_NAME..."
                 az acr delete --name "$ACR_NAME" --resource-group "$SHARED_RG" --yes || true
+            fi
+
+            # Finally, delete the resource group if it exists and is empty
+            if az group show --name "$SHARED_RG" &> /dev/null; then
+                echo "Checking if resource group is empty before deleting..."
+                RESOURCES_COUNT=$(az resource list --resource-group "$SHARED_RG" --query "length([])" -o tsv)
+                if [ "$RESOURCES_COUNT" -eq "0" ]; then
+                    echo "Deleting empty resource group $SHARED_RG..."
+                    az group delete --name "$SHARED_RG" --yes || true
+                else
+                    echo "Resource group still contains $RESOURCES_COUNT resources. Manual cleanup may be required."
+                fi
             fi
         fi
 
